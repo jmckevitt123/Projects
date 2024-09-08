@@ -1,0 +1,164 @@
+---
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+always_allow_html: yes
+---
+## NYPD Shooting Incidents Report
+
+This is a report on data from the NYPD regarding Shooting Incidents. In this report I will use various techniques to clean, transform, analyze and visualize data to identify trends.
+
+Firstly, the data needs to be loaded from its URL, I will also load all packages needed for my report.
+
+```{r include=FALSE}
+shooting_data <- read.csv('https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD')
+
+library(tidyverse)
+library(dplyr)
+library(leaflet)
+library(leaflet.extras)
+library(sf)
+
+```
+
+Next I will look at a sample of my data to see the columns in my data frame.
+
+```{r echo=TRUE}
+
+head(shooting_data)
+```
+
+Next I will use the 'summary()' command to view the columns and see statistical values on each column, these values are only available for columns which comprise of integers as you cannot find the mean of a set of strings.
+
+```{r, echo=TRUE}
+summary(shooting_data)
+```
+
+Certain columns provide no data that can help our report, such as 'INCIDENT_KEY' or 'JURISDICTION_CODE', therefore we can omit these columns to make our data more relevant.
+
+```{r, echo=TRUE}
+shooting_data <- subset(shooting_data, select = -c(INCIDENT_KEY,LOC_OF_OCCUR_DESC,STATISTICAL_MURDER_FLAG,
+                                                   JURISDICTION_CODE,LOC_CLASSFCTN_DESC, LOCATION_DESC, 
+                                                   X_COORD_CD, Y_COORD_CD,PRECINCT, Lon_Lat, OCCUR_TIME))
+```
+
+Now we have removed the columns which we have no use for we need to clean the data of the columns in our new data frame, we will do this by removing rows with NULL or blank values as they may skew our results.
+
+```{r, echo=TRUE}
+shooting_data[shooting_data == ''] <- NA
+shooting_data[shooting_data == '(null)'] <- NA
+shooting_data[shooting_data == 'U'] <- NA
+shooting_data[shooting_data == 'UNKNOWN'] <- NA
+
+shooting_data <- shooting_data[complete.cases(shooting_data),]
+```
+
+Certain columns are also in the wrong format, such as 'OCCUR_DATE' or 'OCCUR_TIME', these are stored as strings when they are actually dates.
+
+In the summary provided we can see that certain columns are stored as characters when they should be stored as other values, such as OCCUR_DATE. I will also make a new column to show the year of the murder to make it easier to use later in data visualisations.
+
+```{r, echo=TRUE}
+
+shooting_data$OCCUR_DATE <- as.Date(shooting_data$OCCUR_DATE, format = '%m/%d/%Y')
+shooting_data$YEAR <- format(shooting_data$OCCUR_DATE, '%Y')
+```
+
+
+Now that our data is cleaned and sorted we can begin analyzing it.
+
+First we will look at which gender is more likely to be the perpetrator in a shooting incident and which gender is more likely to be a victim in a shooting incident.
+
+```{r, echo = TRUE}
+ggplot(shooting_data, aes(x = PERP_SEX, fill = PERP_SEX))+
+  geom_bar()+
+  labs(title = 'Gender of Perpetrator in Shooting', x = 'Gender', y = 'Number of Shooting Incidents')+
+  scale_fill_manual(values = c('pink','blue'))
+ 
+```
+
+Here we can see that men are the perpetrator in the vast majority of these shootings. Lets see what the proportion of males to females looks like for victims of a shooting incident.
+
+```{r, echo = TRUE}
+ggplot(shooting_data, aes(x = VIC_SEX, fill = VIC_SEX))+
+  geom_bar()+
+  labs(title = 'Gender of Victim in Shooting', x = 'Gender', y = 'Number of Shooting Incidents')+
+  scale_fill_manual(values = c('pink','blue'))
+ 
+```
+
+Interestingly here we see that once again main account for the vast majority of victims in these shooting incidents. However we can see that women actually account for more of the victims of shooting incidents than they account for the perpetrators of shooting incidents. Overall however women are far less likely to be involved in a shooting incident at all.
+
+The following graphs will illustrate the racial distributions of both the perpetrators and victims in a shooting incident.
+
+```{r, echo = TRUE}
+ggplot(shooting_data, aes(x = PERP_RACE, fill = PERP_RACE))+
+  geom_bar()+
+  labs(title = 'Race of Perpetrator in Shooting', x = 'Race', y = 'Number of Shooting Incidents', fill = 'Perp Race') +
+  theme(axis.text.x = element_blank())
+
+```
+
+Here we can see that the perpetrator is Black in the majority of shooting incidents, this is then followed by White Hispanic, Black Hispanic, White, Asian / Pacific Islander which is then followed by the race with the least number of shooting perpetrators, American Indians.
+
+```{r echo= TRUE}
+ggplot(shooting_data, aes(x = VIC_RACE, fill = VIC_RACE))+
+  geom_bar()+
+  labs(title = 'Race of Victim in Shooting', x = 'Race', y = 'Number of Shooting Incidents', fill = 'Victim Race') +
+  theme(axis.text.x = element_blank())
+```
+
+Here we can see that the race that was the victim in the most shooting incidents was Black, White Hispanics were next which were followed by Black Hispanics, next up were people who were White. American Indians where the least likely to be the victim in a shooting incident.
+
+From both of these graphs we can see that Black people are the most likely to be the perpetrator and the victim in a shooting incident in New York and American Indians are the least likely to be either the perpetrator and the victim.
+
+In the next segment I will explore if there is a relation between certain places and high shooting incident rates, first we will start off by seeing the distribution of shooting incidents between boroughs.
+
+```{r, echo=TRUE}
+ggplot(shooting_data, aes(x='',fill = BORO))+
+  geom_bar(width=1, stat = 'count')+
+  coord_polar(theta = 'y')+
+  labs(title = 'Distribution of Shooting Incidents between Boroughs', x = '', y = '')+
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())+
+  scale_y_continuous(labels = scales::percent_format(scale = 1))
+```
+
+Here we can see that the majority of shooting incidents took place in Brooklyn, followed by the Bronx, next is manhattan which is closely followed by Queens and the area with the lowest amount of shootings is Staten Island.
+
+However I would like to look closer into the locations of these murders, to do this I am going to use a chloropleth map.
+
+```{r, echo = TRUE}
+map <- leaflet(shooting_data, width = 500, height = 500) %>%
+  setView(lng = -74.006, lat = 40.6828, zoom = 10.2) %>% 
+  addTiles() %>%
+  addHeatmap(
+    lng = ~Longitude,
+    lat = ~Latitude,
+    radius = 3,
+    gradient = 'red',
+    minOpacity = 0.05
+  )
+
+map
+```
+
+From the map we can see the majority of murders are in Queens, the Bronx and Brooklyn. In all these areas there are so many shooting incidents that the area is completely red. In Manhattan and part of Queens have less Shootings and have areas where clear gaps can be seen. Only Staten Island is relatively clear, this is evident in the previous pie chart as well. This map shows that the majority of Shooting incidents are restricted to specific areas.
+
+Finally we will explore if the number of shooting incidents per year has increased or decreased over time.
+
+```{r, echo=TRUE}
+ggplot(shooting_data, aes(x=YEAR))+
+  geom_bar(stat = 'count', fill = 'skyblue')+
+  labs(title = 'Number of Shooting Incidents Each Year',
+       x = 'Year',
+       y = 'Number of Incidents')+
+  theme_minimal()
+
+
+```
+
+This graph shows a steady decline in shooting incidents from 2006-2019, the drop between 2006 and 2019 was over 400 per year. Interestingly since 2019 the number of shooting incidents have steadily risen every year, jumping from around 500 to over 1000 in just 3 years.
+
+In conclusion, we can see that many factors have an effect on the number of shooting incidents such as Gender, Race, Location and Year. We can tell from the data that the most common perpetrator in shootings is male, black and most of these shooting incidents occur in Brooklyn, The Bronx and Queens. For a period of 13 years the number of shooting incidents were steadily decreasing until 2019, since then the number of shooting incidents per year has been rapidly increasing. Whilst these are the insights that the data provides it may be subject to bias, whether that be through socio-economic reasons or through the incorrect collection of data. 
