@@ -1,0 +1,137 @@
+---
+title: "John Hopkins Data Analysis"
+output: html_document
+date: "2024-09-10"
+---
+
+This is a markdown containing an analysis on the John Hopkins Global Covid-19 Data sets. John Hopkins provides 2 data sets, one containing information on confirmed Covid cases and one containing information on confirmed deaths due to Covid. 
+
+In this markdown we will focus on the global confirmed cases data set. We will analyse the spread of Covid over 3 years, creating visualisations and models to spot trends in the data.
+
+
+### Loading and cleaning data
+
+John Hopkins Provides a csv for global confirmed cases through the below url, we can store this url to a variable and then use read_csv() to load it into a dataframe. We then use the head() function to preview the format of the data frame however this will be comented in the markdown as there are too many columns in the data frame.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(data.table)
+
+confirmed_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
+
+confirmed_data <- read.csv(confirmed_url)
+
+#head(confirmed_data)
+```
+Now that we can see the layout of the data frame we can see that it has a wide format, this means that it has columns that represent variables. Long data frames are normally easier to work with and essential for plotting visualizations so we need to convert the format of our data. 
+
+Since our data also includes almost every country in the world we will convert our dates from daily dates into monthly, this makes the analysis processing much more efficient. We will use the head() function again to see the fromat of our new data frame.
+
+```{r, echo=TRUE, warning=FALSE}
+confirmed_long <- confirmed_data %>%
+  pivot_longer(cols = starts_with("X"), names_to = "Date", values_to = "Cases")
+
+confirmed_long <- confirmed_long %>%
+  mutate(Date = gsub("^X", "", Date),
+         Date = as.Date(Date, format = "%m.%d.%y"),
+         Month = floor_date(Date, "month"))
+
+confirmed_monthly <- confirmed_long %>%
+  filter(day(Date) == 1) %>%
+  select(Country.Region, Month, Cases)
+
+head(confirmed_monthly)
+```
+## Data Analysis/Visualisation
+
+Now that we have transformed our data into a usable format we can begin using visualisations to view key trends in the spread of Covid-19.
+
+We will first look at the total Covid cases globally over time to get an idea for the extreme size of this pandemic.
+
+```{r, echo=TRUE}
+
+global_total <- confirmed_monthly %>%
+  group_by(Month) %>%
+  summarize(Global_Cases = sum(Cases, na.rm = TRUE))
+
+ggplot(global_total, aes(x = Month, y = Global_Cases, group = 1)) +
+  geom_line(color = "blue") +
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Global Total COVID-19 Cases Over Time", x = "Month", y = "Total Cases") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+From the graph we can see that from 2020 to 2022 there was a moderate slope, showing that while covid was definitely spreading during this period it was not at the intensity of future growth. While the slope was moderate, almost 300 million confirmed cases of Covid where recorded by 2022. Just as 2022 started we see a giant spike in Covid cases, showing a giant increase in infection rate. This spike brought the total number of confirmed covid cases from 300 million to 500 million in a period of roughly 3 months. After this spike however Covid slowed in spreading and the graph is almost flat in 2023.
+
+Since the above plot only tells us about he global total of countries we may want to see which singular countries have the highest total confirmed covid cases.
+```{r, echo=TRUE}
+top_countries <- confirmed_monthly %>%
+  group_by(Country.Region) %>%
+  summarize(Total_Cases = max(Cases, na.rm = TRUE)) %>%
+  arrange(desc(Total_Cases)) %>%
+  top_n(10, Total_Cases)
+
+ggplot(top_countries, aes(x = reorder(Country.Region, Total_Cases), y = Total_Cases, fill = Country.Region)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Top 10 Countries by Cumulative Confirmed Cases", x = "Country", y = "Total Cases") +
+  scale_y_continuous(labels = scales::comma)+
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+IN this graph we can see that the USA has the most Covid cases by a significant margin, more than double that of the closest country in terms of confirmed cases. Many European countries are also in the top 10 despite having relatively small populations such as Italy, France and Germany. Countries such as BRazil and India would be expected to be in the top 10 due to their high population and population density.
+
+
+Another interesting factor we could investigate is the number of new cases per month, this will show the spread of Covid and potential periods where growth took a sudden jump.
+```{r, echo=TRUE}
+monthly_new_cases <- confirmed_monthly %>%
+  group_by(Month) %>%
+  summarize(Monthly_New_Cases = sum(Cases, na.rm = TRUE)) %>%
+  mutate(Monthly_New_Cases = Monthly_New_Cases - lag(Monthly_New_Cases, default = 0))
+
+
+ggplot(monthly_new_cases, aes(x = Month, y = Monthly_New_Cases)) +
+  geom_line(color = "red", size = 1.5) +
+  labs(title = "Monthly New COVID-19 Cases Trend", x = "Month", y = "New Cases") +
+  scale_y_continuous(labels = scales::comma)+
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+Interestingly we can see that between 2020 and 2021 we have a steady slope, each month more cases are confirmed than the last. Then just as the new year begins there is a dip in new covid cases followed by a spike, this behaviour repeats two more times. After the third small spike there is a giant spike 4 times anything seen before in which 80 million new cases are reported in one month. This spike only lasts 3 months but adds almot 200 million to the total confirmed covid cases. After this spike there is another smaller spike and then we see a sharp decline in new covid cases per month once 2023 begins.
+
+To see how the total global confirmed cases could have progressed if Covid hadn't slowed down we can use a linear regression model to predict future confirmed cases.
+
+```{r, echo=TRUE}
+global_total$Month <- as.Date(global_total$Month)
+
+global_total <- global_total %>%
+  mutate(Time = as.numeric(Month - min(Month)))
+
+model <- lm(Global_Cases ~ Time, data = global_total)
+summary(model)
+
+future_months <- data.frame(Month = seq(max(global_total$Month) + months(1), by = "month", length.out = 12))
+future_months$Time <- as.numeric(future_months$Month - min(global_total$Month))
+future_predictions <- predict(model, newdata = future_months)
+
+future_data <- data.frame(Month = future_months$Month, Global_Cases = future_predictions)
+
+combined_data <- bind_rows(global_total, future_data)
+
+ggplot(combined_data, aes(x = Month, y = Global_Cases)) +
+  geom_line(color = "blue", size = 1.5) +
+  geom_point(data = future_data, aes(x = Month, y = Global_Cases), color = "red") +
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Predicted Future COVID-19 Cases", x = "Month", y = "Total Cases") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+Here we can see that if the Covid pandemic didn't slow there would be a predicted  875 million total confirmed cases. This model is useful as it can provide rough predictions to understand how drastic future growth could be if the infection rate didn't decrease.
+
+## Conclusion
+
+In conclusion we can see, through our visualizations and models, the aggressive spread of Covid from 2021 until 2023. It's spike in 2022 being the biggest insight into just how serious the disease was at one point in time. We can also see a few suprising countries in the top 10 countries with the highest cases which may highlight potential weaknesses in certain countries healthcare systems and decision making. The use of the linear model also allows us to see how bad things could have been if Covid did not slow in spreading.
